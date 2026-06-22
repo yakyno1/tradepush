@@ -1,0 +1,14 @@
+# Local credentials: never commit these files.
+xueqiu_cookie.txt
+eastmoney_cookie.txt
+
+# Collected market data and generated output.
+data/
+outputs/
+*.log
+
+# Python / Streamlit caches.
+__pycache__/
+*.py[cod]
+.venv/
+.streamlit/secrets.toml

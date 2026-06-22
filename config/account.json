@@ -1,0 +1,9 @@
+{
+  "equity": 1000000.0,
+  "cash": 1000000.0,
+  "risk_per_trade_pct": 1.0,
+  "max_stock_pct": 20.0,
+  "max_theme_pct": 35.0,
+  "max_total_pct": 85.0,
+  "confirmed": false
+}

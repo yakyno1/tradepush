@@ -1,0 +1,8 @@
+symbol,name,market,active,note
+SH000001,上证指数,A_INDEX,1,A股主指数
+SZ399001,深证成指,A_INDEX,1,A股主指数
+SZ399006,创业板指,A_INDEX,1,成长风格
+SH000688,科创50,A_INDEX,1,科技风格
+HKHSI,恒生指数,HK_INDEX,1,港股主指数
+HKHSTECH,恒生科技指数,HK_INDEX,1,港股科技
+HKHSCEI,恒生中国企业指数,HK_INDEX,1,港股国企
