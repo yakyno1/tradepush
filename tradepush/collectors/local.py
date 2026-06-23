@@ -72,7 +72,7 @@ def load_sector_summary() -> tuple[pd.DataFrame, Path | None]:
     )
 
 
-def load_sector_history(limit: int = 6) -> list[tuple[pd.DataFrame, Path]]:
+def load_sector_history(limit: int = 90) -> list[tuple[pd.DataFrame, Path]]:
     paths = sorted(SECTOR_DATA_DIR.glob("sector_summary_*.csv"), reverse=True)
     result: list[tuple[pd.DataFrame, Path]] = []
     for path in paths[:limit]:

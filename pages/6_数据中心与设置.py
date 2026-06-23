@@ -59,7 +59,40 @@ if status_result is not None:
 
 section("数据来源健康")
 health = snapshot.source_health.copy()
+health["rows"] = health["rows"].astype(str)
 st.dataframe(health, use_container_width=True, hide_index=True)
+section("预测覆盖诊断")
+stock_coverage = (
+    snapshot.stock_forecasts.assign(
+        可用=snapshot.stock_forecasts["result"].ne("分析不出结果")
+    )
+    .groupby("horizon", as_index=False)
+    .agg(
+        股票总数=("code", "nunique"),
+        有效预测=("可用", "sum"),
+        平均置信度=("confidence", "mean"),
+        平均自信度=("conviction", "mean"),
+    )
+)
+sector_coverage = (
+    snapshot.sector_horizon_forecasts.assign(
+        可用=snapshot.sector_horizon_forecasts["result"].ne("分析不出结果")
+    )
+    .groupby("horizon", as_index=False)
+    .agg(
+        板块总数=("name", "nunique"),
+        有效预测=("可用", "sum"),
+        平均置信度=("confidence", "mean"),
+        平均自信度=("conviction", "mean"),
+    )
+)
+c_stock, c_sector = st.columns(2)
+with c_stock:
+    st.caption("个股：缺历史或低质量信号会被拒绝")
+    st.dataframe(stock_coverage, width="stretch", hide_index=True)
+with c_sector:
+    st.caption("板块：三个月预测需要至少35个有效快照")
+    st.dataframe(sector_coverage, width="stretch", hide_index=True)
 if any(health["status"].isin(["缺失", "缺失/失效"])):
     st.warning("存在缺失来源。系统会继续展示可用数据，但相关结论会降权。")
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -133,3 +134,208 @@ def equity_curve(verification: pd.DataFrame):
     fig.update_layout(title="历史验证参考曲线（非真实成交净值）")
     return base_layout(fig, 390)
 
+
+def forecast_range_chart(forecasts: pd.DataFrame, current_price: float):
+    usable = forecasts[
+        (forecasts["result"] != "分析不出结果")
+        & pd.to_numeric(forecasts["price_low"], errors="coerce").notna()
+    ].copy()
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=[0],
+            y=[current_price],
+            mode="markers+text",
+            text=["当前价"],
+            textposition="top center",
+            marker=dict(color="#20d9ff", size=10),
+            name="当前价",
+        )
+    )
+    if usable.empty:
+        fig.add_annotation(
+            text="没有达到置信度与自信度门槛的预测",
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font=dict(color="#ffbe55", size=15),
+        )
+        fig.update_layout(title="多周期价格区间（拒绝低质量预测）")
+        return base_layout(fig, 410)
+    usable = usable.sort_values("horizon_days")
+    x = [0, *usable["horizon_days"].astype(int).tolist()]
+    mid = [current_price, *pd.to_numeric(usable["price_mid"], errors="coerce").tolist()]
+    low = [current_price, *pd.to_numeric(usable["price_low"], errors="coerce").tolist()]
+    high = [current_price, *pd.to_numeric(usable["price_high"], errors="coerce").tolist()]
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=high,
+            line=dict(width=0),
+            mode="lines",
+            name="区间上沿",
+            hovertemplate="%{y:.2f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=low,
+            fill="tonexty",
+            fillcolor="rgba(88,135,255,.18)",
+            line=dict(width=0),
+            mode="lines",
+            name="历史相似区间",
+            hovertemplate="%{y:.2f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=mid,
+            line=dict(color="#ff5468", width=2.5),
+            mode="lines+markers",
+            name="历史中位路径",
+            hovertemplate="%{y:.2f}<extra></extra>",
+        )
+    )
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=[0, 5, 20, 60],
+        ticktext=["当前", "一周", "一个月", "三个月"],
+        title="预测周期（交易日）",
+    )
+    fig.update_yaxes(title="价格")
+    fig.update_layout(title="多周期条件价格区间")
+    return base_layout(fig, 440)
+
+
+def forecast_confidence_chart(forecasts: pd.DataFrame):
+    data = forecasts.copy().sort_values("horizon_days")
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=data["horizon"],
+            y=data["confidence"],
+            name="置信度",
+            marker_color="#20d9ff",
+            text=data["confidence"].round(0),
+            textposition="outside",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=data["horizon"],
+            y=data["conviction"],
+            name="模型自信度",
+            marker_color="#9a6bff",
+            text=data["conviction"].round(0),
+            textposition="outside",
+        )
+    )
+    fig.add_hline(y=60, line_color="#ffbe55", line_dash="dash", annotation_text="置信度门槛")
+    fig.add_hline(y=55, line_color="#ff5468", line_dash="dot", annotation_text="自信度门槛")
+    fig.update_layout(title="预测质量门槛", barmode="group")
+    fig.update_yaxes(range=[0, 110], title="分数")
+    return base_layout(fig, 390)
+
+
+def sector_forecast_heatmap(forecasts: pd.DataFrame, limit: int = 35):
+    if forecasts.empty:
+        return go.Figure()
+    work = forecasts.copy()
+    usable = work[work["result"] != "分析不出结果"]
+    top_names = (
+        usable.groupby("name")["confidence"].max().sort_values(ascending=False).head(limit).index.tolist()
+    )
+    if not top_names:
+        top_names = work["name"].drop_duplicates().head(limit).tolist()
+    work = work[work["name"].isin(top_names)].copy()
+    work["heat_score"] = np.where(
+        work["result"] == "分析不出结果",
+        np.nan,
+        pd.to_numeric(work["forecast_score"], errors="coerce"),
+    )
+    pivot = work.pivot_table(index="name", columns="horizon", values="heat_score", aggfunc="first")
+    pivot = pivot.reindex(columns=["一周", "一个月", "三个月"])
+    hover = work.pivot_table(index="name", columns="horizon", values="result", aggfunc="first").reindex(
+        index=pivot.index, columns=pivot.columns
+    )
+    fig = go.Figure(
+        go.Heatmap(
+            z=pivot.values,
+            x=pivot.columns,
+            y=pivot.index,
+            zmin=-100,
+            zmax=100,
+            zmid=0,
+            colorscale=[[0, "#2ed99f"], [0.5, "#25344b"], [1, "#ff5468"]],
+            customdata=hover.values,
+            hovertemplate="%{y}<br>%{x}<br>得分 %{z:.1f}<br>%{customdata}<extra></extra>",
+            colorbar=dict(title="方向分"),
+        )
+    )
+    fig.update_layout(title="板块多周期预测热力图（空白=分析不出结果）")
+    return base_layout(fig, max(480, len(pivot) * 23))
+
+
+def sector_history_chart(history: pd.DataFrame, name: str):
+    if history.empty:
+        fig = go.Figure()
+        fig.add_annotation(
+            text="缺少该板块的连续历史快照",
+            x=.5,
+            y=.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+        )
+        return base_layout(fig, 420)
+    data = history.copy()
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    colors = ["#ff5468" if value >= 0 else "#2ed99f" for value in data["pct_chg"]]
+    fig.add_trace(
+        go.Bar(
+            x=data["snapshot_date"],
+            y=data["pct_chg"],
+            marker_color=colors,
+            name="当日涨跌%",
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=data["snapshot_date"],
+            y=data["net_amount"],
+            line=dict(color="#20d9ff", width=2),
+            mode="lines+markers",
+            name="净流入",
+        ),
+        secondary_y=True,
+    )
+    fig.update_yaxes(title_text="涨跌幅%", secondary_y=False)
+    fig.update_yaxes(title_text="净流入（亿）", secondary_y=True)
+    fig.update_layout(title=f"{name} · 价格与资金历史")
+    return base_layout(fig, 430)
+
+
+def factor_contribution_chart(factors: pd.DataFrame, title: str = "因子贡献"):
+    if factors.empty or "contribution" not in factors:
+        return go.Figure()
+    data = factors.sort_values("contribution")
+    colors = ["#ff5468" if value >= 0 else "#2ed99f" for value in data["contribution"]]
+    fig = go.Figure(
+        go.Bar(
+            x=data["contribution"],
+            y=data["factor"],
+            orientation="h",
+            marker_color=colors,
+            hovertemplate="%{y}<br>贡献 %{x:.1f}<extra></extra>",
+        )
+    )
+    fig.add_vline(x=0, line_color="#86a2bc", line_width=1)
+    fig.update_layout(title=title)
+    fig.update_xaxes(title="方向贡献（正=偏多，负=偏空）")
+    return base_layout(fig, max(360, len(data) * 45))

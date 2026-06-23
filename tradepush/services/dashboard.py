@@ -17,6 +17,7 @@ from tradepush.collectors.local import (
     source_health,
 )
 from tradepush.config import load_account
+from tradepush.features.forecasting import build_sector_horizon_forecasts, build_stock_forecasts
 from tradepush.models import MarketState
 from tradepush.risk.positioning import portfolio_metrics
 from tradepush.rules.engine import build_decisions, classify_sectors, evaluate_market, forecast_sectors
@@ -27,6 +28,8 @@ class DashboardSnapshot:
     market: MarketState
     sectors: pd.DataFrame
     sector_forecast: pd.DataFrame
+    sector_horizon_forecasts: pd.DataFrame
+    stock_forecasts: pd.DataFrame
     decisions: pd.DataFrame
     prices: pd.DataFrame
     indices: pd.DataFrame
@@ -49,7 +52,9 @@ def build_snapshot() -> DashboardSnapshot:
     health = source_health()
     market = evaluate_market(indices, prices, sector_raw)
     sectors = classify_sectors(sector_raw)
-    sector_forecast = forecast_sectors(sector_raw, load_sector_history())
+    sector_history = load_sector_history()
+    sector_forecast = forecast_sectors(sector_raw, sector_history)
+    sector_horizon_forecasts = build_sector_horizon_forecasts(sectors, sector_history)
     data_date = latest_data_timestamp()
     global_vetoes: list[str] = []
     source_dates = {
@@ -75,6 +80,12 @@ def build_snapshot() -> DashboardSnapshot:
         data_date=data_date,
         global_vetoes=global_vetoes,
     )
+    stock_forecasts = build_stock_forecasts(
+        decisions=decisions,
+        history_loader=load_history,
+        market=market,
+        data_date=data_date,
+    )
     portfolio = portfolio_metrics(
         positions,
         prices,
@@ -85,6 +96,8 @@ def build_snapshot() -> DashboardSnapshot:
         market=market,
         sectors=sectors,
         sector_forecast=sector_forecast,
+        sector_horizon_forecasts=sector_horizon_forecasts,
+        stock_forecasts=stock_forecasts,
         decisions=decisions,
         prices=prices,
         indices=indices,

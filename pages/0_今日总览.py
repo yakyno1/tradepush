@@ -60,6 +60,8 @@ if run:
         snapshot.market.to_dict(),
         snapshot.sectors,
         snapshot.decisions,
+        snapshot.stock_forecasts,
+        snapshot.sector_horizon_forecasts,
     )
     st.success(f"今日分析已保存：{folder}")
 

@@ -25,6 +25,8 @@ packet = build_ai_packet(
     snapshot.sectors,
     snapshot.decisions,
     snapshot.source_health,
+    snapshot.stock_forecasts,
+    snapshot.sector_horizon_forecasts,
 )
 folder = output_folder(snapshot.data_date)
 
@@ -97,4 +99,3 @@ if "ai_merged" in st.session_state:
         use_container_width=True,
         hide_index=True,
     )
-

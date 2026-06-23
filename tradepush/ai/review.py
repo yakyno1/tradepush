@@ -14,22 +14,46 @@ def build_ai_packet(
     sectors: pd.DataFrame,
     decisions: pd.DataFrame,
     source_health: pd.DataFrame,
+    stock_forecasts: pd.DataFrame | None = None,
+    sector_forecasts: pd.DataFrame | None = None,
 ) -> dict:
     candidates = decisions[decisions["action"].isin(["条件买", "加仓"])].copy()
+    candidate_codes = set(candidates["code"].astype(str))
+    stock_forecasts = stock_forecasts if stock_forecasts is not None else pd.DataFrame()
+    sector_forecasts = sector_forecasts if sector_forecasts is not None else pd.DataFrame()
+    candidate_forecasts = (
+        stock_forecasts[stock_forecasts["code"].astype(str).isin(candidate_codes)].copy()
+        if not stock_forecasts.empty and "code" in stock_forecasts
+        else pd.DataFrame()
+    )
+    valid_sector_forecasts = (
+        sector_forecasts[sector_forecasts["result"] != "分析不出结果"]
+        .sort_values(["horizon_days", "confidence"], ascending=[True, False])
+        .head(60)
+        if not sector_forecasts.empty
+        else pd.DataFrame()
+    )
     return {
-        "schema": "tradepush.ai_review.v1",
+        "schema": "tradepush.ai_review.v2",
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "instruction": (
             "只复核候选逻辑。你可以同意、否决或降级等待；不得修改行情价格、"
-            "止损、仓位上限和硬门槛。"
+            "止损、目标、仓位上限和硬门槛。低于预测质量门槛的结果不得被升级。"
         ),
         "market": market,
-        "top_sectors": sectors.head(15).to_dict(orient="records"),
+        "top_sectors": sectors.head(20).to_dict(orient="records"),
         "candidates": candidates.to_dict(orient="records"),
+        "candidate_multi_horizon_forecasts": candidate_forecasts.to_dict(orient="records"),
+        "sector_multi_horizon_forecasts": valid_sector_forecasts.to_dict(orient="records"),
         "source_health": source_health.to_dict(orient="records"),
         "review_contract": {
             "required_fields": ["code", "action", "reason", "evidence", "vetoes"],
             "allowed_actions": sorted(ALLOWED_AI_ACTIONS),
+            "hard_rules": [
+                "不得把分析不出结果改成有方向预测",
+                "不得修改触发价、失效位、目标位、仓位或风险上限",
+                "必须指出预测周期、置信度、模型自信度和引用字段",
+            ],
         },
     }
 
@@ -84,17 +108,23 @@ def reconcile_reviews(
         second = second_map.get(code)
         result.at[idx, "main_ai"] = main["action"] if main else "未复核"
         result.at[idx, "second_ai"] = second["action"] if second else "未复核"
-        opinions = [x["action"] for x in (main, second) if x]
+        opinions = [item["action"] for item in (main, second) if item]
         if "否决" in opinions:
             result.at[idx, "ai_final"] = "等待"
         elif len(set(opinions)) > 1 or "降级等待" in opinions:
             result.at[idx, "ai_final"] = "等待"
-        elif opinions and all(op == "同意" for op in opinions):
+        elif opinions and all(opinion == "同意" for opinion in opinions):
             result.at[idx, "ai_final"] = row["action"]
         else:
             result.at[idx, "ai_final"] = "等待"
         result.at[idx, "ai_reason"] = " | ".join(
-            filter(None, [main.get("reason", "") if main else "", second.get("reason", "") if second else ""])
+            filter(
+                None,
+                [
+                    main.get("reason", "") if main else "",
+                    second.get("reason", "") if second else "",
+                ],
+            )
         )
     return result
 
@@ -129,6 +159,8 @@ def save_packet(packet: dict, output_dir: Path) -> tuple[Path, Path]:
     ]
     candidates = pd.DataFrame(packet["candidates"])
     lines.append(candidates.to_markdown(index=False) if not candidates.empty else "当前没有拟买入/加仓候选。")
+    forecast = pd.DataFrame(packet.get("candidate_multi_horizon_forecasts", []))
+    lines.extend(["", "## 多周期预测", ""])
+    lines.append(forecast.to_markdown(index=False) if not forecast.empty else "没有达到条件的预测数据。")
     md_path.write_text("\n".join(lines), encoding="utf-8")
     return json_path, md_path
-

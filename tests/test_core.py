@@ -3,10 +3,15 @@ from __future__ import annotations
 import json
 import unittest
 
+import numpy as np
 import pandas as pd
 
 from tradepush.ai.review import reconcile_reviews, validate_review
 from tradepush.features.technical import enrich_history
+from tradepush.features.forecasting import (
+    build_sector_horizon_forecasts,
+    forecast_stock,
+)
 from tradepush.models import MarketState
 from tradepush.risk.positioning import calculate_position
 from tradepush.rules.engine import build_decisions, classify_sectors, forecast_sectors
@@ -31,6 +36,97 @@ class TechnicalTests(unittest.TestCase):
         self.assertIn("ma20", out)
         self.assertIn("atr14", out)
         self.assertGreater(out.iloc[-1]["ma20"], 0)
+
+
+class ForecastTests(unittest.TestCase):
+    def test_missing_stock_history_rejects_all_horizons(self):
+        decision = pd.Series(
+            {
+                "code": "300001",
+                "name": "测试股票",
+                "market": "A",
+                "theme": "测试",
+                "sector_state": "轮动观察",
+                "role": "核心",
+                "current_price": 100,
+                "stop_price": 94,
+                "evidence_time": "2026-06-22",
+            }
+        )
+        market = MarketState("进攻", 80, 85, .6, 1, 100, [])
+        out = forecast_stock(decision, pd.DataFrame(), market, "2026-06-22")
+        self.assertEqual(len(out), 3)
+        self.assertTrue((out["result"] == "分析不出结果").all())
+
+    def test_stock_forecast_exposes_confidence_and_audit(self):
+        dates = pd.date_range("2024-01-01", periods=400, freq="B")
+        close = pd.Series(np.linspace(50, 120, 400) + np.sin(np.arange(400) / 8), dtype=float)
+        history = pd.DataFrame(
+            {
+                "trade_date": dates,
+                "open": close * .995,
+                "high": close * 1.02,
+                "low": close * .98,
+                "close": close,
+                "volume": 1_000_000,
+                "amount": 100_000_000,
+            }
+        )
+        decision = pd.Series(
+            {
+                "code": "300001",
+                "name": "测试股票",
+                "market": "A",
+                "theme": "半导体",
+                "sector_state": "主线进攻",
+                "role": "核心",
+                "current_price": float(close.iloc[-1]),
+                "stop_price": float(close.iloc[-1] * .94),
+                "evidence_time": dates[-1].strftime("%Y-%m-%d"),
+            }
+        )
+        market = MarketState("进攻", 80, 85, .6, 1, 100, [])
+        out = forecast_stock(decision, history, market, dates[-1].strftime("%Y-%m-%d"))
+        self.assertEqual(set(out["horizon"]), {"一周", "一个月", "三个月"})
+        self.assertTrue((out["confidence"] >= 0).all())
+        self.assertTrue(out["factor_details"].str.startswith("[").all())
+
+    def test_sector_three_month_rejects_short_history(self):
+        sectors = pd.DataFrame(
+            [
+                {
+                    "name": "半导体",
+                    "pct_chg": 2.0,
+                    "net_amount": 30,
+                    "amount": 500,
+                    "leader": "测试股票",
+                    "leader_pct": 5,
+                    "sector_state": "主线进攻",
+                    "strength_score": 60,
+                }
+            ]
+        )
+        history = []
+        for index in range(15):
+            date = pd.Timestamp("2026-06-01") + pd.Timedelta(days=index)
+            history.append(
+                (
+                    pd.DataFrame(
+                        [
+                            {
+                                "name": "半导体",
+                                "pct_chg": 1.2,
+                                "net_amount": 20,
+                                "rank": 3,
+                            }
+                        ]
+                    ),
+                    f"sector_summary_{date:%Y%m%d}.csv",
+                )
+            )
+        out = build_sector_horizon_forecasts(sectors, history)
+        three_month = out[out["horizon"] == "三个月"].iloc[0]
+        self.assertEqual(three_month["result"], "分析不出结果")
 
 
 class RiskTests(unittest.TestCase):
