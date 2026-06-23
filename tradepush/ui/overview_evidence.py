@@ -41,19 +41,40 @@ def _source_rows(snapshot: DashboardSnapshot, sources: list[str]) -> pd.DataFram
 
 
 def _market_components(snapshot: DashboardSnapshot) -> tuple[pd.DataFrame, pd.DataFrame]:
+    from tradepush.rules.engine import _index_impact, _is_hk_index
+
     indices = snapshot.indices.copy()
     prices = snapshot.prices.copy()
     sectors = snapshot.sectors.copy()
 
-    index_pct = pd.to_numeric(indices.get("pct_chg", pd.Series(dtype=float)), errors="coerce").dropna()
-    index_avg = float(index_pct.mean()) if not index_pct.empty else 0.0
-    positive_indices = float((index_pct > 0).mean()) if not index_pct.empty else 0.0
-    index_base = max(min(20 + index_avg * 8, 30), 0)
+    a_pct, a_pos = _index_impact(indices, hk_only=False)
+    hk_pct, hk_pos = _index_impact(indices, hk_only=True)
+    has_a = abs(a_pct) > 0.001 or a_pos > 0
+    has_hk = abs(hk_pct) > 0.001 or hk_pos > 0
+
+    if has_a and has_hk:
+        a_impact = max(min(15 + a_pct * 6, 30), 0)
+        hk_impact = max(min(15 + hk_pct * 6, 30), 0)
+        index_impact_score = round((a_impact + hk_impact) / 2, 1)
+    elif has_a:
+        a_impact = max(min(15 + a_pct * 6, 30), 0)
+        index_impact_score = a_impact
+        hk_impact = 0
+    elif has_hk:
+        hk_impact = max(min(15 + hk_pct * 6, 30), 0)
+        index_impact_score = hk_impact
+        a_impact = 0
+    else:
+        index_impact_score = 15.0
+        a_impact = hk_impact = 0
+
+    all_pct = pd.to_numeric(indices.get("pct_chg", pd.Series(dtype=float)), errors="coerce").dropna()
+    positive_indices = float((all_pct > 0).mean()) if not all_pct.empty else 0.0
 
     stock_pct = pd.to_numeric(prices.get("pct_chg", pd.Series(dtype=float)), errors="coerce").dropna()
     breadth = float((stock_pct > 0).mean()) if not stock_pct.empty else 0.0
 
-    above_ma20 = positive_indices
+    above_ma20 = 0.0
     if {"close", "ma20"}.issubset(indices.columns):
         close = pd.to_numeric(indices["close"], errors="coerce")
         ma20 = pd.to_numeric(indices["ma20"], errors="coerce")
@@ -63,16 +84,56 @@ def _market_components(snapshot: DashboardSnapshot) -> tuple[pd.DataFrame, pd.Da
     sector_strength = 0.0
     if not sectors.empty:
         line = sectors.get("line_state", pd.Series("", index=sectors.index)).astype(str)
-        pct = pd.to_numeric(sectors.get("pct_chg", 0), errors="coerce").fillna(0)
-        sector_strength = min(float(((line == "强") | (pct >= 2)).mean()), 1.0)
+        pct_s = pd.to_numeric(sectors.get("pct_chg", 0), errors="coerce").fillna(0)
+        sector_strength = min(float(((line == "强") | (pct_s >= 2)).mean()), 1.0)
 
     data_penalty = -10.0 if any(frame.empty for frame in (indices, prices, sectors)) else 0.0
-    components = [
+
+    components: list[dict] = []
+    if has_a:
+        components.append({
+            "评分项": "A股价格冲击",
+            "原始值": f"{a_pct:+.2f}%（加权）",
+            "计算": f"clamp(15 + {a_pct:+.2f}×6, 0, 30) = {a_impact:.0f}",
+            "贡献分": round(a_impact, 1),
+        })
+    if has_hk:
+        components.append({
+            "评分项": "港股价格冲击",
+            "原始值": f"{hk_pct:+.2f}%（加权）",
+            "计算": f"clamp(15 + {hk_pct:+.2f}×6, 0, 30) = {hk_impact:.0f}",
+            "贡献分": round(hk_impact, 1),
+        })
+    if has_a and has_hk:
+        components.append({
+            "评分项": "价格冲击（A/H均分）",
+            "原始值": f"A:{a_impact:.0f} + H:{hk_impact:.0f}",
+            "计算": f"({a_impact:.0f} + {hk_impact:.0f}) ÷ 2 = {index_impact_score:.1f}",
+            "贡献分": round(index_impact_score, 1),
+        })
+    elif not has_a and not has_hk:
+        components.append({
+            "评分项": "价格冲击（无数据）",
+            "原始值": "默认中性",
+            "计算": "无指数数据，默认15分",
+            "贡献分": 15.0,
+        })
+
+    # Weight note
+    weights_note = "A股：科创50×30% + 创业板×25% + 深证×25% + 上证×20%；港股：恒科×40% + 恒指×35% + 国企×25%"
+    components.insert(0, {
+        "评分项": "指数加权规则",
+        "原始值": "",
+        "计算": weights_note,
+        "贡献分": 0,
+    })
+
+    components.extend([
         {
-            "评分项": "指数平均表现",
-            "原始值": f"{index_avg:+.2f}%",
-            "计算": "限制在0–30分：20 + 指数平均涨跌×8",
-            "贡献分": round(index_base, 1),
+            "评分项": "指数MA20覆盖",
+            "原始值": f"{above_ma20:.0%}",
+            "计算": "站上MA20指数占比×20",
+            "贡献分": round(above_ma20 * 20, 1),
         },
         {
             "评分项": "上涨指数占比",
@@ -87,12 +148,6 @@ def _market_components(snapshot: DashboardSnapshot) -> tuple[pd.DataFrame, pd.Da
             "贡献分": round(breadth * 25, 1),
         },
         {
-            "评分项": "指数MA20覆盖",
-            "原始值": f"{above_ma20:.0%}",
-            "计算": "站上MA20指数占比×20",
-            "贡献分": round(above_ma20 * 20, 1),
-        },
-        {
             "评分项": "强势板块覆盖",
             "原始值": f"{sector_strength:.0%}",
             "计算": "强势板块占比×10",
@@ -104,15 +159,15 @@ def _market_components(snapshot: DashboardSnapshot) -> tuple[pd.DataFrame, pd.Da
             "计算": "任一核心表为空时扣10分",
             "贡献分": data_penalty,
         },
-    ]
+    ])
     component_df = pd.DataFrame(components)
     explained_score = float(component_df["贡献分"].sum())
     adjustment = round(float(snapshot.market.score) - explained_score, 1)
     if abs(adjustment) >= 0.1:
         component_df.loc[len(component_df)] = {
-            "评分项": "时效/硬门槛调整",
+            "评分项": "结构覆盖/硬门槛调整",
             "原始值": "见市场原因",
-            "计算": "例如板块资金过期时额外降级",
+            "计算": "板块资金过期、价格冲击归零+广度崩溃等降级规则",
             "贡献分": adjustment,
         }
 
@@ -122,13 +177,17 @@ def _market_components(snapshot: DashboardSnapshot) -> tuple[pd.DataFrame, pd.Da
             pd.to_numeric(raw_indices.get("close"), errors="coerce")
             >= pd.to_numeric(raw_indices.get("ma20"), errors="coerce")
         ).map({True: "是", False: "否"})
+        raw_indices["市场"] = raw_indices["name"].astype(str).apply(
+            lambda n: "港股" if _is_hk_index(n) else "A股"
+        )
         keep = [
             column
-            for column in ("name", "code", "pct_chg", "close", "ma20", "站上MA20", "trade_date", "source_used")
+            for column in ("市场", "name", "code", "pct_chg", "close", "ma20", "站上MA20", "trade_date", "source_used")
             if column in raw_indices
         ]
         raw_indices = raw_indices[keep].rename(
             columns={
+                "市场": "市场",
                 "name": "指数",
                 "code": "代码",
                 "pct_chg": "涨跌幅%",
@@ -609,7 +668,6 @@ def render_stock_evidence(snapshot: DashboardSnapshot, token: str) -> None:
 
         gates = pd.DataFrame(
             [
-                {"硬门槛": "账户参数已确认", "当前数据": "是" if snapshot.account.get("confirmed") else "否", "通过": bool(snapshot.account.get("confirmed"))},
                 {"硬门槛": "市场允许新开仓", "当前数据": snapshot.market.label, "通过": snapshot.market.label != "停止新开仓"},
                 {"硬门槛": "板块未退潮", "当前数据": sector_state, "通过": sector_state != "退潮回避"},
                 {"硬门槛": "核心或中军", "当前数据": role or "未分类", "通过": role_ok},
@@ -695,7 +753,6 @@ def render_overview_evidence(snapshot: DashboardSnapshot, selected: str) -> None
         "market": _render_market,
         "sector": _render_sector,
         "decisions": _render_decisions,
-        "portfolio": _render_portfolio,
     }
     renderer = renderers.get(selected)
     if renderer is None:

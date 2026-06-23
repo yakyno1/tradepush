@@ -11,4 +11,4 @@ if (-not (Test-Path $venvPython)) {
 }
 
 Set-Location $project
-& $venvPython -m streamlit run app.py --server.port 8510
+& $venvPython -m streamlit run app.py --server.port 8510 --server.address 127.0.0.1 --server.runOnSave true

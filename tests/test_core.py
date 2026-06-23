@@ -409,7 +409,8 @@ class RuleTests(unittest.TestCase):
         self.assertNotEqual(out.iloc[0]["action"], "条件买")
         self.assertIn("板块资金流过期", out.iloc[0]["hard_vetoes"])
 
-    def test_unconfirmed_account_is_a_hard_veto(self):
+    def test_unconfirmed_account_no_longer_a_veto(self):
+        """Account confirmation is no longer a hard veto — removed per user request."""
         prices = pd.DataFrame(
             [
                 {
@@ -452,8 +453,8 @@ class RuleTests(unittest.TestCase):
             history_loader=lambda code, name: (history, None),
             data_date="2026-06-22",
         )
-        self.assertIn("账户参数未确认", out.iloc[0]["hard_vetoes"])
-        self.assertNotEqual(out.iloc[0]["action"], "条件买")
+        # Account unconfirmed no longer blocks — it was removed as a hard veto
+        self.assertNotIn("账户参数未确认", out.iloc[0]["hard_vetoes"])
 
 
 class AIReviewTests(unittest.TestCase):

@@ -48,45 +48,129 @@ def _number(value, default=0.0) -> float:
         return default
 
 
+def _is_hk_index(name: object) -> bool:
+    return "恒生" in str(name)
+
+
+def _index_impact(indices: pd.DataFrame, *, hk_only: bool = False) -> tuple[float, float]:
+    """Compute weighted index price impact for A-share or HK indices.
+
+    Returns (weighted_pct, positive_ratio).
+    """
+    subset = indices[indices["name"].astype(str).apply(lambda n: _is_hk_index(n) == hk_only)].copy()
+    if subset.empty:
+        return 0.0, 0.0
+    pct = pd.to_numeric(subset.get("pct_chg", pd.Series(dtype=float)), errors="coerce")
+    close = pd.to_numeric(subset.get("close", pd.Series(dtype=float)), errors="coerce")
+    ma20 = pd.to_numeric(subset.get("ma20", pd.Series(dtype=float)), errors="coerce")
+    name_series = subset["name"].astype(str)
+
+    if not hk_only:
+        # A-share weights: 科创50 30%, 创业板 25%, 深证成指 25%, 上证 20%
+        weights = pd.Series(0.0, index=subset.index)
+        for idx_val in subset.index:
+            n = str(name_series.get(idx_val, ""))
+            if "科创" in n:
+                weights.at[idx_val] = 0.30
+            elif "创业" in n:
+                weights.at[idx_val] = 0.25
+            elif "深证" in n:
+                weights.at[idx_val] = 0.25
+            elif "上证" in n:
+                weights.at[idx_val] = 0.20
+        # Normalise in case some indices are missing
+        total_w = weights.sum()
+        if total_w > 0:
+            weights = weights / total_w
+    else:
+        # HK weights: 恒生科技 40%, 恒生指数 35%, 恒生中国企业 25%
+        weights = pd.Series(0.0, index=subset.index)
+        for idx_val in subset.index:
+            n = str(name_series.get(idx_val, ""))
+            if "科技" in n:
+                weights.at[idx_val] = 0.40
+            elif "中国企业" in n or "国企" in n:
+                weights.at[idx_val] = 0.25
+            elif "恒生" in n:
+                weights.at[idx_val] = 0.35
+        total_w = weights.sum()
+        if total_w > 0:
+            weights = weights / total_w
+
+    valid = pct.notna()
+    if not valid.any():
+        return 0.0, 0.0
+    weighted_pct = float((pct[valid] * weights[valid]).sum())
+    positive_ratio = float((pct[valid] > 0).mean())
+    return weighted_pct, positive_ratio
+
+
 def evaluate_market(indices: pd.DataFrame, prices: pd.DataFrame, sectors: pd.DataFrame) -> MarketState:
     score = 0.0
     reasons: list[str] = []
 
-    index_pct = pd.to_numeric(indices.get("pct_chg", pd.Series(dtype=float)), errors="coerce").dropna()
-    index_avg = float(index_pct.mean()) if not index_pct.empty else 0.0
-    positive_indices = float((index_pct > 0).mean()) if not index_pct.empty else 0.0
-    score += max(min(20 + index_avg * 8, 30), 0)
-    score += positive_indices * 15
-    reasons.append(f"指数平均涨跌 {index_avg:+.2f}%")
+    # ── 1. 指数价格冲击（A股/港股分开加权） ──
+    a_pct, a_pos = _index_impact(indices, hk_only=False)
+    hk_pct, hk_pos = _index_impact(indices, hk_only=True)
+    # Blend: if both exist, average the two impact scores; if only one, use that
+    has_a = abs(a_pct) > 0.001 or a_pos > 0
+    has_hk = abs(hk_pct) > 0.001 or hk_pos > 0
+    if has_a and has_hk:
+        a_impact = max(min(15 + a_pct * 6, 30), 0)
+        hk_impact = max(min(15 + hk_pct * 6, 30), 0)
+        index_impact_score = round((a_impact + hk_impact) / 2, 1)
+        reasons.append(f"A股加权涨跌 {a_pct:+.2f}%（冲击{a_impact:.0f}分）")
+        reasons.append(f"港股加权涨跌 {hk_pct:+.2f}%（冲击{hk_impact:.0f}分）")
+    elif has_a:
+        index_impact_score = max(min(15 + a_pct * 6, 30), 0)
+        reasons.append(f"A股加权涨跌 {a_pct:+.2f}%")
+    elif has_hk:
+        index_impact_score = max(min(15 + hk_pct * 6, 30), 0)
+        reasons.append(f"港股加权涨跌 {hk_pct:+.2f}%")
+    else:
+        index_impact_score = 15.0
+        reasons.append("无可用指数数据，价格冲击默认中性")
+    score += index_impact_score
 
+    # ── 2. 指数趋势结构（MA20覆盖） ──
+    above_ma20 = 0.0
+    if {"close", "ma20"}.issubset(indices.columns):
+        close = pd.to_numeric(indices["close"], errors="coerce")
+        ma20 = pd.to_numeric(indices["ma20"], errors="coerce")
+        valid_ma = (close.notna() & ma20.notna())
+        above_ma20 = float((close[valid_ma] >= ma20[valid_ma]).mean()) if valid_ma.any() else 0.0
+    score += above_ma20 * 20
+    reasons.append(f"指数站上MA20比例 {above_ma20:.0%}")
+
+    # ── 3. 上涨指数占比 ──
+    all_pct = pd.to_numeric(indices.get("pct_chg", pd.Series(dtype=float)), errors="coerce").dropna()
+    positive_indices = float((all_pct > 0).mean()) if not all_pct.empty else 0.0
+    score += positive_indices * 15
+    reasons.append(f"上涨指数占比 {positive_indices:.0%}")
+
+    # ── 4. 自选池上涨广度 ──
     stock_pct = pd.to_numeric(prices.get("pct_chg", pd.Series(dtype=float)), errors="coerce").dropna()
     breadth = float((stock_pct > 0).mean()) if not stock_pct.empty else 0.0
     score += breadth * 25
     reasons.append(f"自选池上涨占比 {breadth:.0%}")
 
-    above_ma20 = positive_indices
-    if {"close", "ma20"}.issubset(indices.columns):
-        close = pd.to_numeric(indices["close"], errors="coerce")
-        ma20 = pd.to_numeric(indices["ma20"], errors="coerce")
-        valid = (close.notna() & ma20.notna())
-        above_ma20 = float((close[valid] >= ma20[valid]).mean()) if valid.any() else 0.0
-    score += above_ma20 * 20
-    reasons.append(f"指数站上MA20比例 {above_ma20:.0%}")
-
+    # ── 5. 强势板块覆盖 ──
     sector_strength = 0.0
     if not sectors.empty:
         line = sectors.get("line_state", pd.Series("", index=sectors.index)).astype(str)
-        pct = pd.to_numeric(sectors.get("pct_chg", 0), errors="coerce").fillna(0)
-        sector_strength = min(float(((line == "强") | (pct >= 2)).mean()), 1.0)
+        pct_s = pd.to_numeric(sectors.get("pct_chg", 0), errors="coerce").fillna(0)
+        sector_strength = min(float(((line == "强") | (pct_s >= 2)).mean()), 1.0)
     score += sector_strength * 10
     reasons.append(f"强势板块覆盖 {sector_strength:.0%}")
 
+    # ── 6. 数据完整度 ──
     required = [not indices.empty, not prices.empty, not sectors.empty]
     data_quality = sum(required) / len(required) * 100
     if data_quality < 100:
         score -= 10
         reasons.append("核心数据存在缺口，市场评级降级")
 
+    # ── 7. 结构覆盖：极端弱市强制降级 ──
     score = round(max(min(score, 100), 0), 1)
     if score >= 70:
         label, exposure = "进攻", 85.0
@@ -94,7 +178,18 @@ def evaluate_market(indices: pd.DataFrame, prices: pd.DataFrame, sectors: pd.Dat
         label, exposure = "谨慎", 50.0
     else:
         label, exposure = "停止新开仓", 0.0
-    return MarketState(label, score, exposure, breadth, index_avg, data_quality, reasons)
+
+    # Structural override: price impact floor + breadth/M20 collapse → force red
+    if index_impact_score <= 2 and breadth < 0.20 and above_ma20 < 0.20:
+        label, exposure = "停止新开仓", 0.0
+        reasons.append("价格冲击归零且广度与MA20崩溃，强制停止新开仓")
+    # Exception: strong sector leadership can prevent full stop
+    elif index_impact_score <= 2 and sector_strength > 0.60:
+        label = min(label, "谨慎", key=lambda x: {"进攻": 2, "谨慎": 1, "停止新开仓": 0}.get(x, 0))
+        exposure = min(exposure, 50.0)
+        reasons.append("指数价格冲击虽弱，但强势板块>60%，限制降级为谨慎")
+
+    return MarketState(label, score, exposure, breadth, float(all_pct.mean()) if not all_pct.empty else 0.0, data_quality, reasons)
 
 
 def classify_sectors(sectors: pd.DataFrame) -> pd.DataFrame:
@@ -383,8 +478,6 @@ def build_decisions(
         stop_pct = risk / trigger * 100 if trigger else 100.0
 
         vetoes: list[str] = list(global_vetoes or [])
-        if not bool(account.get("confirmed", False)):
-            vetoes.append("账户参数未确认")
         status = str(row.get("status", ""))
         if "ERROR" in status or "FAIL" in status:
             vetoes.append("行情状态异常")

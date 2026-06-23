@@ -271,7 +271,7 @@ def sector_forecast_heatmap(forecasts: pd.DataFrame, limit: int = 35):
             zmin=-100,
             zmax=100,
             zmid=0,
-            colorscale=[[0, "#2ed99f"], [0.5, "#25344b"], [1, "#ff5468"]],
+            colorscale=[[0, "#22c55e"], [0.25, "#4ade80"], [0.5, "#1e293b"], [0.75, "#f87171"], [1, "#ef4444"]],
             customdata=hover.values,
             hovertemplate="%{y}<br>%{x}<br>得分 %{z:.1f}<br>%{customdata}<extra></extra>",
             colorbar=dict(title="方向分"),

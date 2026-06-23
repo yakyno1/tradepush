@@ -11,14 +11,14 @@ from tradepush.collectors.history import collect_akshare_history
 from tradepush.collectors.local import project_is_self_contained
 from tradepush.collectors.pipeline import run_all, run_intraday, save_status
 from tradepush.collectors.xueqiu import collect_xueqiu
-from tradepush.config import CONFIG_DIR, load_account, save_account
+from tradepush.config import CONFIG_DIR
 from tradepush.storage.snapshots import snapshot_calendar
 from tradepush.ui.components import cached_snapshot, hero, refresh_snapshot, section, usage_note
 from tradepush.ui.theme import setup_page
 
 setup_page("数据中心与设置", "⚙")
 snapshot = cached_snapshot()
-hero("数据中心与设置", "查看来源健康、编辑账户与本地覆盖配置。Cookie只显示状态，不会在界面暴露内容。")
+hero("数据中心与设置", "查看来源健康、编辑自选池与安全区配置。Cookie只显示状态，不会在界面暴露内容。")
 usage_note(
     "本页如何使用",
     [
@@ -117,37 +117,8 @@ with c_sector:
 if any(health["status"].isin(["缺失", "缺失/失效"])):
     st.warning("存在缺失来源。系统会继续展示可用数据，但相关结论会降权。")
 
-tab1, tab2, tab3, tab4 = st.tabs(["账户风控", "自选池", "安全区", "诊断"])
+tab1, tab2, tab3 = st.tabs(["自选池", "安全区", "诊断"])
 with tab1:
-    account = load_account()
-    with st.form("account_form"):
-        c1, c2 = st.columns(2)
-        with c1:
-            equity = st.number_input("账户权益", min_value=0.0, value=float(account["equity"]), step=10_000.0)
-            cash = st.number_input("现金", min_value=0.0, value=float(account["cash"]), step=10_000.0)
-            risk = st.number_input("单笔风险 %", min_value=0.1, max_value=3.0, value=float(account["risk_per_trade_pct"]), step=0.1)
-        with c2:
-            max_stock = st.number_input("单票上限 %", min_value=1.0, max_value=50.0, value=float(account["max_stock_pct"]), step=1.0)
-            max_theme = st.number_input("主题上限 %", min_value=1.0, max_value=80.0, value=float(account["max_theme_pct"]), step=1.0)
-            max_total = st.number_input("总仓位上限 %", min_value=1.0, max_value=100.0, value=float(account["max_total_pct"]), step=1.0)
-        confirmed = st.checkbox("我已核对以上账户参数", value=bool(account.get("confirmed")))
-        submitted = st.form_submit_button("保存账户设置", type="primary", use_container_width=True)
-    if submitted:
-        save_account(
-            {
-                "equity": equity,
-                "cash": cash,
-                "risk_per_trade_pct": risk,
-                "max_stock_pct": max_stock,
-                "max_theme_pct": max_theme,
-                "max_total_pct": max_total,
-                "confirmed": confirmed,
-            }
-        )
-        refresh_snapshot()
-        st.success("账户设置已保存。")
-
-with tab2:
     path = CONFIG_DIR / "watchlist.csv"
     df = read_csv_safe(path)
     edited = st.data_editor(df, use_container_width=True, num_rows="dynamic", key="watchlist_editor")
@@ -160,7 +131,7 @@ with tab2:
         if removed:
             st.warning(f"已自动移除 {removed} 条市场与代码重复的记录。")
 
-with tab3:
+with tab2:
     path = CONFIG_DIR / "safety_zones.csv"
     df = read_csv_safe(path)
     edited_zones = st.data_editor(df, use_container_width=True, num_rows="dynamic", key="zones_editor")
@@ -169,7 +140,7 @@ with tab3:
         refresh_snapshot()
         st.success("安全区已保存。")
 
-with tab4:
+with tab3:
     section("价格模式纪律")
     st.write("- `raw`：真实买卖价、止损和成交复核。")
     st.write("- `qfq`：均线、趋势、相对强弱和回测。")

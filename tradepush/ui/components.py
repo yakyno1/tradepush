@@ -31,7 +31,12 @@ def cached_snapshot() -> DashboardSnapshot:
     if snapshot_id:
         record = find_snapshot(snapshot_id)
         if record:
-            return _cached_archived_snapshot(record.path)
+            snap = _cached_archived_snapshot(record.path)
+            # Overlay current account config — historical snapshots freeze the
+            # account.json at archive time, but the user may have updated it since.
+            from tradepush.config import load_account
+            snap.account = load_account()
+            return snap
     return _cached_live_snapshot()
 
 
@@ -80,6 +85,7 @@ def snapshot_history_selector() -> None:
     )
     if selected_date == "实时最新":
         st.session_state["tp_snapshot_id"] = ""
+        _cached_live_snapshot.clear()
         st.caption("显示当前本地数据；可能包含尚未归档的设置变化。")
         return
 

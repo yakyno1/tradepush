@@ -87,7 +87,12 @@ cards(
 )
 
 section("多周期预测总图")
-st.plotly_chart(sector_forecast_heatmap(forecasts), width="stretch")
+valid_count = int((forecasts["result"] != "分析不出结果").sum()) if not forecasts.empty else 0
+if valid_count == 0:
+    st.warning("当前没有任何板块达到多周期预测的门槛。历史快照不足或数据覆盖不够时，预测会被拒绝。")
+else:
+    st.plotly_chart(sector_forecast_heatmap(forecasts), width="stretch")
+    st.caption(f"共 {valid_count} 条有效预测 / {len(forecasts)} 条总行数。空白格 = 该周期证据不足，拒绝输出。")
 
 forecast_pivot = forecasts.pivot_table(
     index="name",
