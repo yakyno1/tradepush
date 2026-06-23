@@ -40,6 +40,13 @@ class DashboardSnapshot:
     account: dict
     data_date: str
     generated_at: str
+    snapshot_id: str = ""
+    snapshot_kind: str = "live"
+    snapshot_label: str = "实时最新"
+    snapshot_formal: bool = False
+    snapshot_reason: str = ""
+    snapshot_origin: str = "live"
+    archive_path: str = ""
 
 
 def build_snapshot() -> DashboardSnapshot:

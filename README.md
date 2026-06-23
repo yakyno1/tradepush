@@ -53,7 +53,27 @@ cd E:\Ai_project\tradepush
 
 # AKShare A/H 历史K线
 .\.venv\Scripts\python.exe collect_data.py history
+
+# 补录单个历史交易日
+.\.venv\Scripts\python.exe collect_data.py reconstruct 2026-06-22
+
+# 同时联网补回东方财富历史板块涨跌和主力资金
+.\.venv\Scripts\python.exe collect_data.py reconstruct 2026-06-22 --force --with-sector-history
+
+# 批量补录日期区间（自动跳过周末和休市日）
+.\.venv\Scripts\python.exe collect_data.py reconstruct-range --start 2026-06-01 --end 2026-06-22
+
+# 已有重建版时仍保留一个新的补算版本
+.\.venv\Scripts\python.exe collect_data.py reconstruct 2026-06-22 --force
+
+# PowerShell 快捷脚本：一个日期为单日，两个日期为区间
+.\BACKFILL_HISTORY.ps1 2026-06-22
+.\BACKFILL_HISTORY.ps1 2026-06-01 2026-06-22
 ```
+
+历史补录会从本地历史K线提取当日股票和指数收盘数据，并只使用截至该日的数据补算规则与预测。
+未曾保存的板块资金、盘中快照和当时账户配置无法事后精确恢复，系统会明确标记缺失或当前配置，
+不会拿其他日期的数据冒充。
 
 Cookie：
 

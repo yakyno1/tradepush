@@ -22,6 +22,17 @@ def read_csv_safe(path: Path | None) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def deduplicate_securities(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep one row per market/security code while preserving display values."""
+    if df.empty or "code" not in df.columns:
+        return df.copy()
+    work = df.copy()
+    market = work.get("market", pd.Series("", index=work.index)).astype(str).str.upper().str.strip()
+    code = work["code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    work["_security_key"] = market + ":" + code
+    return work.drop_duplicates("_security_key", keep="first").drop(columns="_security_key").reset_index(drop=True)
+
+
 def file_date_key(path: Path) -> tuple[str, float]:
     dates = re.findall(r"(?<!\d)(20\d{6})(?!\d)", path.stem)
     return (max(dates) if dates else "", path.stat().st_mtime)

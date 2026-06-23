@@ -11,6 +11,8 @@ port = 8510
 address = "localhost"
 headless = true
 
+[runner]
+magicEnabled = false
+
 [browser]
 gatherUsageStats = false
-

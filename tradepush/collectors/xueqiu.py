@@ -8,7 +8,13 @@ from typing import Any
 import pandas as pd
 import requests
 
-from tradepush.collectors.common import load_cookie, read_csv_safe, safe_number, sanitize_filename
+from tradepush.collectors.common import (
+    deduplicate_securities,
+    load_cookie,
+    read_csv_safe,
+    safe_number,
+    sanitize_filename,
+)
 from tradepush.config import (
     CONFIG_DIR,
     HISTORY_DATA_DIR,
@@ -135,7 +141,12 @@ def fetch_kline(session: requests.Session, symbol: str, count: int = 500) -> tup
         return pd.DataFrame(), error or "empty kline"
     frame = pd.DataFrame(items, columns=columns)
     if "timestamp" in frame:
-        frame["trade_date"] = pd.to_datetime(frame["timestamp"], unit="ms", errors="coerce")
+        frame["trade_date"] = (
+            pd.to_datetime(frame["timestamp"], unit="ms", errors="coerce", utc=True)
+            .dt.tz_convert("Asia/Shanghai")
+            .dt.tz_localize(None)
+            .dt.normalize()
+        )
     elif "date" in frame:
         frame["trade_date"] = pd.to_datetime(frame["date"], errors="coerce")
     for col in ("open", "high", "low", "close", "volume", "amount", "turnoverrate"):
@@ -276,7 +287,7 @@ def _collect_table(
 
 def collect_xueqiu(collect_history: bool = True, kline_count: int = 500) -> list[dict[str, Any]]:
     bootstrap_config()
-    watchlist = read_csv_safe(CONFIG_DIR / "watchlist.csv")
+    watchlist = deduplicate_securities(read_csv_safe(CONFIG_DIR / "watchlist.csv"))
     indices = read_csv_safe(CONFIG_DIR / "indices.csv")
     session = _session()
     results = [

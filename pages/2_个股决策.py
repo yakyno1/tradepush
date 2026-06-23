@@ -139,7 +139,11 @@ if selected_code not in available_codes:
     st.session_state["selected_stock_code"] = selected_code
 
 decision = filtered[filtered["code"].astype(str) == selected_code].iloc[0]
-history, history_path = load_history(str(decision["code"]), str(decision["name"]))
+history, history_path = load_history(
+    str(decision["code"]),
+    str(decision["name"]),
+    as_of=snapshot.data_date,
+)
 forecasts = snapshot.stock_forecasts[
     snapshot.stock_forecasts["code"].astype(str).eq(selected_code)
 ].sort_values("horizon_days")

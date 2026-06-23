@@ -3,16 +3,23 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from tradepush.config import OUTPUT_DIR, ensure_project_dirs
+from tradepush.storage.snapshots import SnapshotRecord, save_dashboard_snapshot
+
+if TYPE_CHECKING:
+    from tradepush.services.dashboard import DashboardSnapshot
 
 
-def output_folder(data_date: str) -> Path:
+def output_folder(data_date: str, version: str | None = None) -> Path:
     ensure_project_dirs()
     key = data_date.replace("-", "") if data_date else datetime.now().strftime("%Y%m%d")
     path = OUTPUT_DIR / key
+    if version:
+        path = path / version
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -24,8 +31,13 @@ def save_analysis(
     decisions: pd.DataFrame,
     stock_forecasts: pd.DataFrame | None = None,
     sector_forecasts: pd.DataFrame | None = None,
-) -> Path:
-    folder = output_folder(data_date)
+    *,
+    snapshot: DashboardSnapshot | None = None,
+    kind: str = "intraday",
+    formal: bool = False,
+) -> tuple[Path, SnapshotRecord | None]:
+    version = f"{datetime.now():%H%M%S}_{kind}"
+    folder = output_folder(data_date, version)
     decisions.to_csv(folder / "trade_decisions.csv", index=False, encoding="utf-8-sig")
     sectors.to_csv(folder / "sector_signals.csv", index=False, encoding="utf-8-sig")
     if stock_forecasts is not None:
@@ -77,4 +89,13 @@ def save_analysis(
         ].head(80)
         lines.append(forecast_show.to_markdown(index=False))
     (folder / "trade_report.md").write_text("\n".join(lines), encoding="utf-8")
-    return folder
+    record = None
+    if snapshot is not None:
+        record = save_dashboard_snapshot(
+            snapshot,
+            kind=kind,
+            formal=formal,
+            reason="人工运行正式分析" if formal else "人工运行盘中分析",
+            origin="analysis",
+        )
+    return folder, record

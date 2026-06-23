@@ -163,7 +163,7 @@ if selected_name not in available_names:
 
 sector = sectors[sectors["name"].astype(str) == selected_name].iloc[0]
 sector_forecasts = forecasts[forecasts["name"].astype(str) == selected_name].sort_values("horizon_days")
-sector_history_sources = load_sector_history()
+sector_history_sources = load_sector_history(as_of=snapshot.data_date)
 sector_history = sector_history_for_name(selected_name, sector_history_sources)
 usable_count = int((sector_forecasts["result"] != "分析不出结果").sum())
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from tradepush.ui.components import snapshot_history_selector
+
 pages = [
     st.Page("pages/0_今日总览.py", title="今日总览", icon=":material/dashboard:"),
     st.Page("pages/1_板块轮动.py", title="板块轮动", icon=":material/grid_view:"),
@@ -13,4 +15,9 @@ pages = [
     st.Page("pages/7_系统说明.py", title="系统说明", icon=":material/info:"),
 ]
 
-st.navigation(pages, position="sidebar").run()
+with st.sidebar:
+    snapshot_history_selector()
+    st.divider()
+
+navigation = st.navigation(pages, position="sidebar")
+_ = navigation.run()

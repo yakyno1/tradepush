@@ -383,6 +383,8 @@ def build_decisions(
         stop_pct = risk / trigger * 100 if trigger else 100.0
 
         vetoes: list[str] = list(global_vetoes or [])
+        if not bool(account.get("confirmed", False)):
+            vetoes.append("账户参数未确认")
         status = str(row.get("status", ""))
         if "ERROR" in status or "FAIL" in status:
             vetoes.append("行情状态异常")

@@ -5,13 +5,14 @@ import json
 import pandas as pd
 import streamlit as st
 
-from tradepush.collectors.common import read_csv_safe
+from tradepush.collectors.common import deduplicate_securities, read_csv_safe
 from tradepush.collectors.eastmoney import collect_eastmoney
 from tradepush.collectors.history import collect_akshare_history
 from tradepush.collectors.local import project_is_self_contained
 from tradepush.collectors.pipeline import run_all, run_intraday, save_status
 from tradepush.collectors.xueqiu import collect_xueqiu
 from tradepush.config import CONFIG_DIR, load_account, save_account
+from tradepush.storage.snapshots import snapshot_calendar
 from tradepush.ui.components import cached_snapshot, hero, refresh_snapshot, section, usage_note
 from tradepush.ui.theme import setup_page
 
@@ -61,6 +62,26 @@ section("数据来源健康")
 health = snapshot.source_health.copy()
 health["rows"] = health["rows"].astype(str)
 st.dataframe(health, use_container_width=True, hide_index=True)
+
+section("历史快照日历")
+calendar = snapshot_calendar()
+if calendar.empty:
+    st.info("暂无历史快照。下一次盘中刷新、完整采集或保存分析时会自动建立。")
+else:
+    calendar_show = calendar.rename(
+        columns={
+            "date": "日期",
+            "intraday_count": "盘中快照",
+            "close_count": "收盘快照",
+            "reconstruction_count": "历史重建版",
+            "formal_close": "有正式收盘版",
+            "latest_time": "最后记录时间",
+            "status": "完整性",
+        }
+    )
+    st.dataframe(calendar_show, use_container_width=True, hide_index=True)
+    st.caption("遗漏盘中快照不会阻断次日使用；缺少正式收盘版会明确标记，不能由后一天数据冒充。")
+
 section("预测覆盖诊断")
 stock_coverage = (
     snapshot.stock_forecasts.assign(
@@ -131,9 +152,13 @@ with tab2:
     df = read_csv_safe(path)
     edited = st.data_editor(df, use_container_width=True, num_rows="dynamic", key="watchlist_editor")
     if st.button("保存自选池", use_container_width=True):
-        edited.to_csv(path, index=False, encoding="utf-8-sig")
+        cleaned = deduplicate_securities(edited)
+        removed = len(edited) - len(cleaned)
+        cleaned.to_csv(path, index=False, encoding="utf-8-sig")
         refresh_snapshot()
         st.success("自选池已保存。")
+        if removed:
+            st.warning(f"已自动移除 {removed} 条市场与代码重复的记录。")
 
 with tab3:
     path = CONFIG_DIR / "safety_zones.csv"

@@ -10,6 +10,7 @@ import pandas as pd
 from tradepush.collectors.common import (
     cookie_status,
     date_from_path,
+    deduplicate_securities,
     latest_date,
     load_latest_usable,
     read_csv_safe,
@@ -29,7 +30,7 @@ from tradepush.config import (
 
 def load_watchlist() -> pd.DataFrame:
     bootstrap_config()
-    return read_csv_safe(CONFIG_DIR / "watchlist.csv")
+    return deduplicate_securities(read_csv_safe(CONFIG_DIR / "watchlist.csv"))
 
 
 def load_safety_zones() -> pd.DataFrame:
@@ -47,12 +48,13 @@ def load_positions() -> pd.DataFrame:
 
 
 def load_daily_prices() -> tuple[pd.DataFrame, Path | None]:
-    return load_latest_usable(
+    frame, path = load_latest_usable(
         MARKET_DATA_DIR,
         "daily_prices_*.csv",
         {"code", "name", "market", "close"},
         "close",
     )
+    return deduplicate_securities(frame), path
 
 
 def load_market_indices() -> tuple[pd.DataFrame, Path | None]:
@@ -72,13 +74,19 @@ def load_sector_summary() -> tuple[pd.DataFrame, Path | None]:
     )
 
 
-def load_sector_history(limit: int = 90) -> list[tuple[pd.DataFrame, Path]]:
+def load_sector_history(limit: int = 90, as_of: str | None = None) -> list[tuple[pd.DataFrame, Path]]:
     paths = sorted(SECTOR_DATA_DIR.glob("sector_summary_*.csv"), reverse=True)
     result: list[tuple[pd.DataFrame, Path]] = []
-    for path in paths[:limit]:
+    cutoff = pd.to_datetime(as_of, errors="coerce")
+    for path in paths:
         frame = read_csv_safe(path)
         if not frame.empty and {"name", "pct_chg"}.issubset(frame.columns):
+            frame_date = pd.to_datetime(latest_date(frame) or date_from_path(path), errors="coerce")
+            if pd.notna(cutoff) and pd.notna(frame_date) and frame_date > cutoff:
+                continue
             result.append((frame, path))
+            if len(result) >= limit:
+                break
     return result
 
 
@@ -92,7 +100,7 @@ def load_prediction_verification() -> tuple[pd.DataFrame, list[Path]]:
 def history_candidates(code: str, name: str) -> list[Path]:
     raw = str(code).strip().replace(".0", "")
     width = 5 if raw.isdigit() and len(raw) <= 5 else 6
-    normalized = raw.zfill(width)
+    normalized = raw.zfill(width) if raw.isdigit() else raw
     exact = HISTORY_DATA_DIR / f"{normalized}_{name}_500d.csv"
     candidates = [exact, *HISTORY_DATA_DIR.glob(f"{normalized}_*_500d.csv")]
     # The collector can also keep a source suffix while a run is in progress.
@@ -100,7 +108,7 @@ def history_candidates(code: str, name: str) -> list[Path]:
     return list(dict.fromkeys(candidates))
 
 
-def load_history(code: str, name: str) -> tuple[pd.DataFrame, Path | None]:
+def load_history(code: str, name: str, as_of: str | None = None) -> tuple[pd.DataFrame, Path | None]:
     for path in history_candidates(code, name):
         if not path.exists():
             continue
@@ -120,11 +128,22 @@ def load_history(code: str, name: str) -> tuple[pd.DataFrame, Path | None]:
         df = df.rename(columns=rename)
         if "trade_date" not in df or "close" not in df:
             continue
-        df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce")
+        parsed_dates = pd.to_datetime(df["trade_date"], errors="coerce")
+        # Legacy Xueqiu files stored UTC timestamps as naive values. A daily bar at
+        # 16:00 UTC belongs to the following calendar day in Asia/Shanghai.
+        valid_hours = parsed_dates.dropna().dt.hour
+        if not valid_hours.empty and float((valid_hours == 16).mean()) >= 0.8:
+            parsed_dates = (parsed_dates + pd.Timedelta(hours=8)).dt.normalize()
+        else:
+            parsed_dates = parsed_dates.dt.normalize()
+        df["trade_date"] = parsed_dates
         for col in ("open", "high", "low", "close", "volume", "amount"):
             if col in df:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         clean = df.dropna(subset=["trade_date", "close"]).sort_values("trade_date")
+        cutoff = pd.to_datetime(as_of, errors="coerce")
+        if pd.notna(cutoff):
+            clean = clean[clean["trade_date"] <= cutoff]
         if not clean.empty:
             return clean, path
     return pd.DataFrame(), None
